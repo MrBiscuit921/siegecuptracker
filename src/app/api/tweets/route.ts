@@ -1,14 +1,30 @@
+import {Redis} from "@upstash/redis";
 import {NextResponse} from "next/server";
 
-let cachedData: any = null;
-let cachedAt: number | null = null;
+const redis = new Redis({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+const CACHE_KEY = "siege-cup-upstash";
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 
 export async function GET() {
   const now = Date.now();
-  // Serve cached data if it's less than 24 hours old
-  if (cachedData && cachedAt && now - cachedAt < CACHE_DURATION) {
-    return NextResponse.json(cachedData);
+
+  // Try to get cached data from Redis
+  const cachedRaw = await redis.get(CACHE_KEY);
+  let cached: {data: any; cachedAt: number} | null = null;
+  if (cachedRaw) {
+    try {
+      cached =
+        typeof cachedRaw === "string" ? JSON.parse(cachedRaw) : cachedRaw;
+    } catch {
+      cached = null;
+    }
+  }
+  if (cached && cached.cachedAt && now - cached.cachedAt < CACHE_DURATION) {
+    return NextResponse.json(cached.data);
   }
 
   try {
@@ -84,9 +100,8 @@ export async function GET() {
       isTestData: false,
     };
 
-    // Cache the response
-    cachedData = responseData;
-    cachedAt = now;
+    // Store in Redis
+    await redis.set(CACHE_KEY, {data: responseData, cachedAt: now});
 
     return NextResponse.json(responseData);
   } catch (error) {
